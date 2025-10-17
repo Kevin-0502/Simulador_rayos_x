@@ -13,20 +13,38 @@ function App() {
   const [btnSetText, setBtnSetText] = useState("Set");
   const [btnSetColor, setBtnSetColor] = useState("initialColor");
   const [imgPos, setImgPos] = useState({ x: 0, y: 0 });
+  const [showImage, setShowImage] = useState(false);
+
+  // Nuevos estados para los sliders de tamaño del canvas
+  const [canvasWidth, setCanvasWidth] = useState(800);
+  const [canvasHeight, setCanvasHeight] = useState(600);
 
   const drag = useRef({ dragging: false, startX: 0, startY: 0, originX: 0, originY: 0 });
   const img = useRef(new Image());
   const scaleRef = useRef(1);
-  const [selectedImage, setSelectedImage] = useState("http://192.168.2.105:3001/api/abdomen");
+  const [selectedImage, setSelectedImage] = useState("http://192.168.2.103:3001/api/abdomen");
+  const [pendingImage, setPendingImage] = useState("http://192.168.2.103:3001/api/abdomen");
 
   // Estados para recorte
   const [isSelecting, setIsSelecting] = useState(false);
-  const [selection, setSelection] = useState(null); // {x, y, w, h}
+  const [selection, setSelection] = useState(null);
 
   // Imagen original para resetear
   const originalImage = useRef(null);
 
+  // Configuraciones de kVp y mA según la tabla
+  const examConfigurations = {
+    "http://192.168.2.103:3001/api/abdomen": { kv: 85, ma: 24 },
+    "http://192.168.2.103:3001/api/cabeza": { kv: 80, ma: 10 },
+    "http://192.168.2.103:3001/api/mano": { kv: 55, ma: 2 },
+    "http://192.168.2.103:3001/api/pelvis": { kv: 80, ma: 18 },
+    "http://192.168.2.103:3001/api/pie": { kv: 55, ma: 3 },
+    "http://192.168.2.103:3001/api/torax": { kv: 110, ma: 4 }
+  };
+
   useEffect(() => {
+    if (!showImage) return;
+    
     img.current = new Image();
     img.current.crossOrigin = "anonymous";
     img.current.src = selectedImage;
@@ -38,8 +56,8 @@ function App() {
         scale = maxWidth / img.current.width;
       }
       scaleRef.current = scale;
-      canvas.width = img.current.width * scale;
-      canvas.height = img.current.height * scale;
+      canvas.width = canvasWidth;
+      canvas.height = canvasHeight;
       const startX = (canvas.width - img.current.width * scale) / 2;
       const startY = (canvas.height - img.current.height * scale) / 2;
       setImgPos({ x: startX, y: startY });
@@ -51,17 +69,23 @@ function App() {
       ctx.drawImage(img.current, 0, 0, canvas.width, canvas.height);
       originalImage.current = canvas.toDataURL();
     };
-  }, [selectedImage]);
+  }, [selectedImage, showImage, canvasWidth, canvasHeight]);
 
   const drawImage = () => {
+    if (!showImage) return;
+    
     const canvas = canvasRef.current;
     const ctx = canvas.getContext("2d");
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     const scale = scaleRef.current;
     ctx.save();
     ctx.scale(scale, scale);
-    const brightness = ma / 50;
+    
+    // MODIFICACIÓN: Invertir la relación del brillo con mA
+    // A mayor mA, menor brillo (valor entre 0.1 y 2.0)
+    const brightness = Math.max(0.1, 2.0 - (ma / 50));
     const contrast = Math.min(3, Math.max(0.1, 120 / kv));
+    
     ctx.filter = `brightness(${brightness}) contrast(${contrast})`;
     ctx.drawImage(img.current, imgPos.x / scale, imgPos.y / scale);
     ctx.restore();
@@ -77,16 +101,18 @@ function App() {
   };
 
   useEffect(() => {
-    if (!imageLoaded) return;
+    if (!imageLoaded || !showImage) return;
     drawImage();
     const handleResize = () => {
       drawImage();
     };
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
-  }, [kv, ma, imgPos, imageLoaded, selection]);
+  }, [kv, ma, imgPos, imageLoaded, selection, showImage, canvasWidth, canvasHeight]);
 
   const onMouseDown = (e) => {
+    if (!showImage) return;
+    
     if (e.shiftKey) {
       // iniciar selección
       const rect = canvasRef.current.getBoundingClientRect();
@@ -103,6 +129,8 @@ function App() {
   };
 
   const onMouseMove = (e) => {
+    if (!showImage) return;
+    
     if (isSelecting && selection) {
       const rect = canvasRef.current.getBoundingClientRect();
       const w = e.clientX - rect.left - selection.x;
@@ -116,16 +144,25 @@ function App() {
   };
 
   const onMouseUp = () => {
+    if (!showImage) return;
+    
     drag.current.dragging = false;
     setIsSelecting(false);
   };
 
   const onMouseLeave = () => {
+    if (!showImage) return;
+    
     drag.current.dragging = false;
     setIsSelecting(false);
   };
 
   const handleSave = () => {
+    if (!showImage) {
+      alert("No hay imagen para guardar");
+      return;
+    }
+    
     const canvas = canvasRef.current;
     if (!canvas) {
       alert("No hay imagen para guardar");
@@ -144,6 +181,16 @@ function App() {
     setInputMa(50);
     setImgPos({ x: 0, y: 0 });
     setSelection(null);
+    setShowImage(false);
+    setImageLoaded(false);
+    setClickCount(0);
+    setBtnSetText("Set");
+    setBtnSetColor("initialColor");
+    // Restaurar la imagen seleccionada actual
+    setSelectedImage(pendingImage);
+    // Resetear tamaño del canvas a valores por defecto
+    setCanvasWidth(800);
+    setCanvasHeight(600);
 
     if (originalImage.current) {
       const canvas = canvasRef.current;
@@ -152,8 +199,8 @@ function App() {
       const restored = new Image();
       restored.src = originalImage.current;
       restored.onload = () => {
-        canvas.width = restored.width;
-        canvas.height = restored.height;
+        canvas.width = canvasWidth;
+        canvas.height = canvasHeight;
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         ctx.drawImage(restored, 0, 0);
       };
@@ -161,8 +208,8 @@ function App() {
   };
 
   const applyValues = () => {
-    if (selection) {
-      // Recortar imagen
+    if (showImage && selection) {
+      // Recortar imagen (solo si la imagen está visible)
       const canvas = canvasRef.current;
       const ctx = canvas.getContext("2d");
 
@@ -184,6 +231,9 @@ function App() {
         setBtnSetColor("#ff0000ff");
         setKv(inputKv);
         setMa(inputMa);
+        // Actualizar la imagen seleccionada con la pendiente antes de mostrar
+        setSelectedImage(pendingImage);
+        setShowImage(true);
         setTimeout(() => {
           setClickCount(0);
           setBtnSetText("Set");
@@ -194,32 +244,89 @@ function App() {
   };
 
   const handleImageChange = (e) => {
-    setSelectedImage(e.target.value);
+    const selectedUrl = e.target.value;
+    setPendingImage(selectedUrl);
+    
+    // Actualizar kV y mA según la configuración del examen seleccionado
+    const config = examConfigurations[selectedUrl];
+    if (config) {
+      setInputKv(config.kv);
+      setInputMa(config.ma);
+    }
   };
 
   return (
     <div className="container">
       <div className="left-panel">
-        <p>Mantén presionada la tecla <b>Shift</b> y arrastra con el mouse para seleccionar área a recortar</p>
-        <select onChange={handleImageChange} value={selectedImage} style={{ marginBottom: 10 }}>
-          <option value="http://192.168.2.105:3001/api/abdomen">Abdomen</option>
-          <option value="http://192.168.2.105:3001/api/cabeza">Cabeza</option>
-          <option value="http://192.168.2.105:3001/api/mano">Mano</option>
-          <option value="http://192.168.2.105:3001/api/pelvis">Pelvis</option>
-          <option value="http://192.168.2.105:3001/api/pie">Pie</option>
-          <option value="http://192.168.2.105:3001/api/torax">Tórax</option>
+        {/* Sliders para tamaño del canvas */}
+        <div className="sliders-container">
+          <div className="slider-group">
+            <p>Width {canvasWidth}</p>
+            <input
+              type="range"
+              min="200"
+              max="1000"
+              step="10"
+              value={canvasWidth}
+              onChange={(e) => setCanvasWidth(parseInt(e.target.value))}
+              className="slider"
+            />
+          </div>
+          <div className="slider-group">
+            <p>Height: {canvasHeight}</p>
+            <input
+              type="range"
+              min="100"
+              max="900"
+              step="10"
+              value={canvasHeight}
+              onChange={(e) => setCanvasHeight(parseInt(e.target.value))}
+              className="slider"
+            />
+          </div>
+        </div>
+
+        <select onChange={handleImageChange} value={pendingImage} style={{ marginBottom: 10 }}>
+          <option value="http://192.168.2.103:3001/api/abdomen">Abdomen</option>
+          <option value="http://192.168.2.103:3001/api/cabeza">Cabeza</option>
+          <option value="http://192.168.2.103:3001/api/mano">Mano</option>
+          <option value="http://192.168.2.103:3001/api/pelvis">Pelvis</option>
+          <option value="http://192.168.2.103:3001/api/pie">Pie</option>
+          <option value="http://192.168.2.103:3001/api/torax">Tórax</option>
         </select>
+        
+        {/* Mostrar mensaje cuando no hay imagen */}
+        {!showImage && (
+          <div style={{ 
+            border: "2px dashed #ccc", 
+            padding: "50px", 
+            textAlign: "center", 
+            marginTop: "20px",
+            backgroundColor: "#f9f9f9"
+          }}>
+            <p>La imagen aparecerá después de hacer clic en el botón "X Ray"</p>
+            <p><small>Imagen seleccionada: {pendingImage.split('/').pop()}</small></p>
+          </div>
+        )}
+        
+        {/* Canvas solo visible cuando showImage es true */}
         <canvas
           ref={canvasRef}
           onMouseDown={onMouseDown}
           onMouseMove={onMouseMove}
           onMouseUp={onMouseUp}
           onMouseLeave={onMouseLeave}
+          style={{ 
+            display: showImage ? "block" : "none",
+            width: canvasWidth,
+            height: canvasHeight
+          }}
         />
+        <p><small>Mantén presionada la tecla <b>Shift</b> y arrastra con el mouse para seleccionar área a recortar</small></p>
       </div>
       <div className="right-panel">
         <div>
-          <label>kV (contraste)</label><br />
+          <label>kV </label><br />
           <input
             type="number"
             min="10"
@@ -231,7 +338,7 @@ function App() {
             }}
           />
           <br /><br /><br />
-          <label>mA (brillo)</label><br />
+          <label>mA </label><br />
           <input
             type="number"
             min="0"
@@ -243,7 +350,7 @@ function App() {
             }}
           />
           <br /><br />
-          <label>ms (milisegundos)</label><br />
+          <label>ms </label><br />
           <input
             type="number"
             min="100"
